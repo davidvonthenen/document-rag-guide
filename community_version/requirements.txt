@@ -1,0 +1,5 @@
+opensearch-py==3.0.0
+llama-cpp-python==0.3.8
+spacy==3.8.5
+
+flask==3.1.2
