@@ -93,8 +93,7 @@ def main():
     else:
         # Demo questions (safe to replace for your corpus)
         questions = [
-            "Tell me about the connection between Ernie Wise and Vodafone.",
-            "Tell me something about Ernie Wise."
+            "Windsurf was bought by OpenAI for how much?",
         ]
 
     for q in questions:
