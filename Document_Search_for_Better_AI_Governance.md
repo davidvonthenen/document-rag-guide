@@ -36,7 +36,7 @@ At a high level, the Document RAG architecture consists of three main components
 
 3. **Integration Layer (Middleware)**: Connects the LLM and OpenSearch. For each question it calls the external NER API, builds an **auditable, entity-aware dis_max** query, and **queries LT and HOT in parallel**. This NER API is external and intentional. For maximum precision and correctness, it's highly recommended that a custom NER tuned to your problem set is created. This NER API keeps per-store top results without cross-mixing scores, collects highlights, interleaves results deterministically, and assembles the LLM prompt.
 
-![Generic Document RAG Implementation](./images/community_version.png)
+![Generic Document RAG Implementation](./images/reinforcement_learning.png)
 
 In this implementation, OpenSearch is a **document search system**, not a black-box vector store. We rely on keyword matching, BM25 ranking, phrase constraints, and metadata filters (e.g., `explicit_terms`, `category`) to keep retrieval explainable and deterministic. Two instances exist primarily for **governance boundaries and retention variations**, not because latency alone demands it.
 
