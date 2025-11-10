@@ -44,14 +44,16 @@ OPENSEARCH_LONG_PORT = int(os.getenv("OPENSEARCH_LONG_PORT", "9201"))
 OPENSEARCH_LONG_USER = os.getenv("OPENSEARCH_LONG_USER", "")
 OPENSEARCH_LONG_PASS = os.getenv("OPENSEARCH_LONG_PASS", "")
 OPENSEARCH_LONG_SSL  = os.getenv("OPENSEARCH_LONG_SSL", "false").lower() == "true"
-LONG_INDEX_NAME = env_str("LONG_INDEX_NAME", "bbc")
+# LONG_INDEX_NAME = env_str("LONG_INDEX_NAME", "bbc")
+LONG_INDEX_NAME = env_str("LONG_INDEX_NAME", "bbc-chunks")
 
 OPENSEARCH_HOT_HOST = os.getenv("OPENSEARCH_HOT_HOST", "localhost")
 OPENSEARCH_HOT_PORT = int(os.getenv("OPENSEARCH_HOT_PORT", "9202"))
 OPENSEARCH_HOT_USER = os.getenv("OPENSEARCH_HOT_USER", "")
 OPENSEARCH_HOT_PASS = os.getenv("OPENSEARCH_HOT_PASS", "")
 OPENSEARCH_HOT_SSL  = os.getenv("OPENSEARCH_HOT_SSL", "false").lower() == "true"
-HOT_INDEX_NAME = env_str("HOT_INDEX_NAME", "bbc")
+# HOT_INDEX_NAME = env_str("HOT_INDEX_NAME", "bbc")
+HOT_INDEX_NAME = env_str("HOT_INDEX_NAME", "bbc-chunks")
 
 
 ##############################################################################
