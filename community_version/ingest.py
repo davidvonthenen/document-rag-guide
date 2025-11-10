@@ -4,7 +4,7 @@ Ingest BBC articles into OpenSearch with explicit multi-term recall.
 """
 import os, glob, time
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Optional
 import requests
 import json
 
@@ -15,6 +15,7 @@ from opensearchpy import OpenSearch
 # ----------------------------
 DATA_DIR   = os.getenv("DATA_DIR", "bbc")
 INDEX_NAME = os.getenv("INDEX_NAME", "bbc")
+CHUNK_INDEX_NAME = os.getenv("CHUNK_INDEX_NAME", "bbc-chunks")
 
 OPENSEARCH_HOST = os.getenv("OPENSEARCH_HOST", "localhost")
 OPENSEARCH_PORT = int(os.getenv("OPENSEARCH_PORT", "9201"))
@@ -50,8 +51,8 @@ def post_ner(text: str, timeout: float = 5.0) -> dict:
         raise SystemExit(f"Server returned non-JSON response: {r.text[:2000]}") from e
 
 
-def extract_normalized_entities(text_file: Path) -> List[str]:
-    text = text_file.read_text(encoding="utf-8", errors="ignore")
+def extract_normalized_entities_from_text(text: str) -> List[str]:
+    """Return unique, case-normalized named entities detected in the text."""
     ner_result = post_ner(text)
 
     seen, normalized = set(), []
@@ -62,6 +63,32 @@ def extract_normalized_entities(text_file: Path) -> List[str]:
             normalized.append(k)
 
     return normalized
+
+
+def extract_normalized_entities(text_file: Path) -> List[str]:
+    """Compat wrapper to keep the previous file-based API."""
+    text = text_file.read_text(encoding="utf-8", errors="ignore")
+    return extract_normalized_entities_from_text(text)
+
+
+def split_into_paragraphs(text: str) -> List[str]:
+    """Split text into non-empty paragraphs separated by blank lines."""
+    paragraphs: List[str] = []
+    current: List[str] = []
+
+    for line in text.splitlines():
+        if line.strip():
+            current.append(line)
+            continue
+
+        if current:
+            paragraphs.append("\n".join(current).strip())
+            current = []
+
+    if current:
+        paragraphs.append("\n".join(current).strip())
+
+    return paragraphs or ([text.strip()] if text.strip() else [])
 
 # ----------------------------
 # OpenSearch connection
@@ -84,7 +111,11 @@ def connect_long() -> OpenSearch:
 # ----------------------------
 # Index + mapping
 # ----------------------------
-def ensure_index(client: OpenSearch, index_name: str) -> None:
+def ensure_index(
+    client: OpenSearch,
+    index_name: str,
+    extra_properties: Optional[Dict[str, dict]] = None,
+) -> None:
     if client.indices.exists(index=index_name):
         return
     body = {
@@ -112,13 +143,24 @@ def ensure_index(client: OpenSearch, index_name: str) -> None:
             }
         },
     }
+    if extra_properties:
+        body["mappings"]["properties"].update(extra_properties)
     client.indices.create(index=index_name, body=body)
 
 # ----------------------------
 # Ingest
 # ----------------------------
-def ingest_bbc(client: OpenSearch, data_dir: str, index_name: str) -> None:
+def ingest_bbc(client: OpenSearch, data_dir: str, index_name: str, chunk_index_name: str) -> None:
     ensure_index(client, index_name)
+    ensure_index(
+        client,
+        chunk_index_name,
+        extra_properties={
+            "chunk_index": {"type": "integer"},
+            "chunk_count": {"type": "integer"},
+            "parent_filepath": {"type": "keyword"},
+        },
+    )
 
     files = sorted(glob.glob(os.path.join(data_dir, "*", "*.txt")))
     if not files:
@@ -131,7 +173,7 @@ def ingest_bbc(client: OpenSearch, data_dir: str, index_name: str) -> None:
         category = p.parent.name
         text = p.read_text(encoding="utf-8", errors="ignore")
 
-        explicit_terms = extract_normalized_entities(p)
+        explicit_terms = extract_normalized_entities_from_text(text)
 
         # Stable document id based on relative filepath
         doc_id = p.as_posix()
@@ -149,12 +191,47 @@ def ingest_bbc(client: OpenSearch, data_dir: str, index_name: str) -> None:
         print(f"[INGEST] {doc_id} ({len(text)} chars):\nexplicit terms: {explicit_terms}\n")
         client.index(index=index_name, id=doc_id, body=doc, refresh=False)
 
+        paragraphs = split_into_paragraphs(text)
+        if not paragraphs:
+            continue
+
+        chunk_count = len(paragraphs)
+        for idx, paragraph in enumerate(paragraphs):
+            # trim paragraph and skip empty ones
+            paragraph = paragraph.strip()
+            if not paragraph:
+                continue
+
+            chunk_terms = extract_normalized_entities_from_text(paragraph) if paragraph else []
+            chunk_doc = {
+                "content": paragraph,
+                "category": category,
+                "filepath": doc_id,
+                "parent_filepath": doc_id,
+                "chunk_index": idx,
+                "chunk_count": chunk_count,
+                "explicit_terms": chunk_terms,
+                "explicit_terms_text": " ".join(chunk_terms) if chunk_terms else "",
+                "ingested_at_ms": now_ms,
+                "doc_version": now_ms,
+            }
+            chunk_doc_id = f"{doc_id}::chunk-{idx:03d}"
+            print(
+                f"[INGEST][CHUNK] {chunk_doc_id} ({len(paragraph)} chars):\n"
+                f"explicit terms: {chunk_terms}\n"
+            )
+            client.index(index=chunk_index_name, id=chunk_doc_id, body=chunk_doc, refresh=False)
+
     client.indices.refresh(index=index_name)
-    print(f"[OK] Ingest complete. Indexed {len(files)} docs into '{index_name}'")
+    client.indices.refresh(index=chunk_index_name)
+    print(
+        f"[OK] Ingest complete. Indexed {len(files)} docs into '{index_name}' and "
+        f"{chunk_index_name}"
+    )
 
 def main():
     client = connect_long()
-    ingest_bbc(client, DATA_DIR, INDEX_NAME)
+    ingest_bbc(client, DATA_DIR, INDEX_NAME, CHUNK_INDEX_NAME)
 
 if __name__ == "__main__":
     main()
