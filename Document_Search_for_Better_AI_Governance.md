@@ -145,7 +145,7 @@ Some characteristics of long-term memory:
 
 * **It is comprehensive:** The store covers a wide range of documents (manuals, knowledge articles, books, historical records). For enterprise assistants this can include policies, product docs, FAQs, and industry literature-material that benefits from durable indexing and provenance.
 
-* **It is structured for retrieval:** In this reference implementation we index **whole documents** (with optional chunking) with deterministic mappings. Each record carries `content` (text), `category` (keyword, lowercase normalizer), `filepath`/`URI` (stable `_id`), `explicit_terms` (keyword, lowercase normalizer), `explicit_terms_text` (text), `ingested_at_ms` (epoch_millis), and `doc_version` (long). This supports precise BM25, phrase constraints, and entity-aware filters.
+* **It is structured for retrieval:** In this reference implementation we index **whole documents** and, by default, **paragraph-level chunks** with deterministic mappings. Each record carries `content` (text), `category` (keyword, lowercase normalizer), `filepath`/`URI` (stable `_id`), `explicit_terms` (keyword, lowercase normalizer), `explicit_terms_text` (text), `ingested_at_ms` (epoch_millis), and `doc_version` (long). This supports precise BM25, phrase constraints, and entity-aware filters.
 
 * **It ensures consistency and accuracy:** The LT store is curated via a controlled ingest path that **enriches with external NER** at write time and assigns stable IDs plus `doc_version`. Updates are performed by re-ingest, keeping the corpus reproducible.
 
