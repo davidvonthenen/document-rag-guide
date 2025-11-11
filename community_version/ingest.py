@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Ingest BBC articles into OpenSearch with explicit multi-term recall.
+Ingest BBC articles into OpenSearch with explicit multi-term recall and
+paragraph-level chunking for retrieval.
 """
 import os, glob, time
 from pathlib import Path
@@ -191,6 +192,7 @@ def ingest_bbc(client: OpenSearch, data_dir: str, index_name: str, chunk_index_n
         print(f"[INGEST] {doc_id} ({len(text)} chars):\nexplicit terms: {explicit_terms}\n")
         client.index(index=index_name, id=doc_id, body=doc, refresh=False)
 
+        # Paragraph-level chunking is the default granularity for the RAG agent.
         paragraphs = split_into_paragraphs(text)
         if not paragraphs:
             continue

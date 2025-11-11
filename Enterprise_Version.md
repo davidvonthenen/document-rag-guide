@@ -52,7 +52,7 @@ Long-term memory is the system's **source of truth**. Anything that lands here m
 | Stage                | What Happens                                                                           | Enterprise Add-Ons                                                                             |
 | -------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | **1. Parse**         | Raw content (text files, PDFs, tickets) is loaded into the pipeline.                   | Compute content hashes for tamper detection and store file paths for lineage.                  |
-| **2. Slice**         | Documents are ingested **as full docs** in the reference script; chunking is optional. | Preserve offsets and category metadata if you later enable slicing.                            |
+| **2. Slice**         | Documents are ingested **as full docs** and additionally **chunked by paragraph by default**. | Preserve offsets and category metadata if you later enable alternative slicing strategies.                            |
 | **3. Extract Terms** | An **external NER HTTP service** returns normalized entities (lowercased, deduped).    | Maintain the NER service version separately; terms are stored, not the model name.             |
 | **4. Persist**       | Documents are indexed into OpenSearch with explicit term fields.                       | Each record carries `filepath`/`URI`, `ingested_at_ms`, and numeric `doc_version` for observability. |
 
