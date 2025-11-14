@@ -435,7 +435,7 @@ def ask(llm: Llama, question: str, *, observability: bool = False, save_path: st
     # 5) Rank per store (tolerate 0 hits)
     keep_long = rank_hits(res_long)
     keep_hot  = rank_hits(res_hot)
-    combined  = combine_hits(keep_long, keep_hot, max_total=10)
+    combined  = combine_hits(keep_long, keep_hot, max_total=5)
 
     # 6) Optional observability prints
     if observability:
