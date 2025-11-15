@@ -134,7 +134,7 @@ def connect_hot() -> Tuple[OpenSearch, str]:
 # Query builder (lexical-first, auditable)
 ##############################################################################
 
-def build_query(question: str, entities: List[str]) -> Dict[str, Any]:
+def build_query_opensearch_ranking(question: str, entities: List[str]) -> Dict[str, Any]:
     """
     - If no entities -> dis_max over a single match on the full question.
     - If entities exist -> dis_max with two bool branches:
@@ -214,6 +214,54 @@ def build_query(question: str, entities: List[str]) -> Dict[str, Any]:
     }
 
 
+
+def build_query_external_ranking(question: str, entities: List[str]) -> Dict[str, Any]:
+    """
+    - If no entities -> dis_max over a single match on the full question.
+    - If entities exist -> dis_max with two bool branches:
+        (A) STRICT / AND-style:
+            - terms_set on explicit_terms requiring ALL
+            - match on explicit_terms_text with operator='and'
+            - multi_match on content/category^0.5 with operator='and'
+          boost 30.0
+        (B) OR-style:
+            - terms on explicit_terms (entities)
+            - match on explicit_terms_text (joined)
+            - multi_match on content/category^0.5
+          boost 10.0
+    - No fallback full-question clause when entities are present.
+    """
+    if not entities:
+        return {
+            "dis_max": {
+                "tie_breaker": 0.0,
+                "queries": [
+                    {"match": {"content": {"query": question}}}
+                ]
+            }
+        }
+
+    joined = " ".join(entities)
+
+    or_bool = {
+        "bool": {
+            "should": [
+                {"terms": {"explicit_terms": entities}},
+                {"match": {"explicit_terms_text": joined}},
+                {"multi_match": {"query": joined, "fields": ["content^1.0", "category^0.5"]}},
+            ],
+            "minimum_should_match": 1,
+            "boost": 10.0
+        }
+    }
+
+    return {
+        "dis_max": {
+            "tie_breaker": 0.0,
+            "queries": [or_bool]
+        }
+    }
+
 ##############################################################################
 # LLM loader and answering
 ##############################################################################
@@ -237,7 +285,7 @@ def load_llm() -> Llama:
 # Search + ranking utilities
 ##############################################################################
 
-SEARCH_SIZE = env_int("SEARCH_SIZE", 8)
+SEARCH_SIZE = env_int("SEARCH_SIZE", 10)
 ALPHA       = float(env_str("ALPHA", "0.5"))
 PREFERENCE  = env_str("PREFERENCE_TOKEN", "governance-audit-v1")
 DO_EXPLAIN  = env_bool("OS_EXPLAIN", False)
@@ -381,7 +429,7 @@ def save_results(path: str, payload: Dict[str, Any]) -> None:
 # Orchestrator
 ##############################################################################
 
-def generate_answer(llm: Llama, question: str, context: str) -> str:
+def generate_answer(llm: Llama, question: str, context: str, observability: bool = False) -> str:
     if not context.strip():
         return "No supporting documents found."
     
@@ -389,12 +437,13 @@ def generate_answer(llm: Llama, question: str, context: str) -> str:
     user_prompt = (
         f"Context:\n{context}\n\n"
         f"Question: {question}\n\n"
-        f"If context lacks the answer, reply exactly with: No relevant information found."
+        f"If context lacks the answer, reply with the following and nothing else: No relevant information found."
     )
 
-    print("\n\n=== Prompt to LLM ===")
-    print(user_prompt)
-    print("==========\n\n")
+    if observability:
+        print("\n\n=== Prompt to LLM ===")
+        print(user_prompt)
+        print("==========\n\n")
 
     resp = llm.create_chat_completion(
         messages=[{"role": "system", "content": sys_msg},
@@ -404,13 +453,16 @@ def generate_answer(llm: Llama, question: str, context: str) -> str:
     return resp["choices"][0]["message"]["content"].strip()
 
 
-def ask(llm: Llama, question: str, *, observability: bool = False, save_path: str | None = None) -> Tuple[str, List[Dict[str, Any]]]:
+def ask(llm: Llama, question: str, *, observability: bool = False,  external_ranker: bool = False, save_path: str | None = None) -> Tuple[str, List[Dict[str, Any]]]:
     # 1) NER
     ner = post_ner(question)
     entities = normalize_entities(ner)
 
     # 2) Build query to match <original>
-    query = build_query(question, entities)
+    if external_ranker:
+        query = build_query_external_ranking(question, entities)
+    else:
+        query = build_query_opensearch_ranking(question, entities)
 
     if observability:
         if entities:
@@ -433,8 +485,12 @@ def ask(llm: Llama, question: str, *, observability: bool = False, save_path: st
         res_hot  = fut_hot.result()
 
     # 5) Rank per store (tolerate 0 hits)
-    keep_long = rank_hits(res_long)
-    keep_hot  = rank_hits(res_hot)
+    if external_ranker:
+        # TODO: we should use an external ranker here to improve LLM input quality. use https://github.com/davidvonthenen/bm25s
+        print("[WARNING] External ranking not yet implemented; falling back to internal score thresholding.")
+    else:
+        keep_long = rank_hits(res_long)
+        keep_hot  = rank_hits(res_hot)
     combined  = combine_hits(keep_long, keep_hot, max_total=5)
 
     # 6) Optional observability prints
@@ -474,5 +530,5 @@ def ask(llm: Llama, question: str, *, observability: bool = False, save_path: st
     # 8) Build context and answer (short-circuit if none)
     context_block = build_context(combined)
     
-    answer = generate_answer(llm, question, context_block)
+    answer = generate_answer(llm, question, context_block, observability)
     return answer, combined
