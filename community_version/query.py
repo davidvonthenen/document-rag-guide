@@ -79,7 +79,7 @@ from llama_cpp import Llama
 def main():
     parser = argparse.ArgumentParser(description="Dual-store BM25 retrieval with parallel LONG/HOT searches (governance-first).")
     parser.add_argument("--question", help="User question to answer.")
-    parser.add_argument("--observability", action="store_true", default=True,
+    parser.add_argument("--observability", action="store_true", default=False,
                         help="Print query JSON and match summaries (default OFF).")
     parser.add_argument("--save-results", type=str, default=None,
                         help="Append compact JSONL result records to this path (default OFF).")
@@ -93,8 +93,8 @@ def main():
     else:
         # Demo questions (safe to replace for your corpus)
         questions = [
-            "Tell me about the connection between Ernie Wise and Vodafone.",
-            "Tell me something about Ernie Wise."
+            "How much did Google purchase Windsurf for?",
+            "How much did OpenAI purchase Windsurf for?"
         ]
 
     for q in questions:
