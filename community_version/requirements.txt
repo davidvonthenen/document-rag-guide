@@ -3,3 +3,8 @@ llama-cpp-python==0.3.8
 spacy==3.8.5
 
 flask==3.1.2
+
+# external ranker
+bm25s==0.2.14
+PyStemmer==3.0.0
+jax[cpu]==0.8.0
