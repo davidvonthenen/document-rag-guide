@@ -83,6 +83,8 @@ def main():
                         help="Print query JSON and match summaries (default OFF).")
     parser.add_argument("--save-results", type=str, default=None,
                         help="Append compact JSONL result records to this path (default OFF).")
+    parser.add_argument("--top-k", type=int, default=10,
+                        help="Number of top documents to retrieve and provide to the LLM (default 10).")
     args = parser.parse_args()
 
     llm = load_llm()
@@ -102,7 +104,7 @@ def main():
         print(f"QUESTION: {q}")
         print("=" * 88)
         t0 = time.time()
-        answer, hits = ask(llm, q, observability=args.observability, save_path=args.save_results)
+        answer, hits = ask(llm, q, observability=args.observability, save_path=args.save_results, top_k=args.top_k)
         dt = time.time() - t0
 
         print("\n" + "=" * 88)

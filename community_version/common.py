@@ -9,13 +9,24 @@ import argparse
 from pathlib import Path
 from typing import Dict, List, Tuple, Any
 from functools import lru_cache
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import requests
 from opensearchpy import OpenSearch
 from opensearchpy.exceptions import TransportError
 from llama_cpp import Llama
+
+import bm25s
+
+try:
+    import Stemmer  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    Stemmer = None  # type: ignore
+
+
+_BM25_STOPWORDS = "en"
+_STEMMER = Stemmer.Stemmer("english") if Stemmer else None  # type: ignore[attr-defined]
 
 
 ##############################################################################
@@ -274,7 +285,7 @@ def load_llm() -> Llama:
         n_ctx=32768,
         n_threads=max(4, os.cpu_count() or 8),
         temperature=0.2,
-        top_p=0.95,
+        top_p=0.80,
         repeat_penalty=1.2,
         chat_format="chatml",
         verbose=False,
@@ -338,6 +349,103 @@ def search_one(
     return res
 
 
+def rerank_hits_with_bm25(
+    question: str,
+    res_long: Dict[str, Any],
+    res_hot: Dict[str, Any],
+    top_k: int = 10,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Re-rank hits from LONG and HOT stores using BM25.
+
+    Args:
+        question: Natural-language query posed by the user.
+        res_long: Raw OpenSearch response for the LONG index.
+        res_hot: Raw OpenSearch response for the HOT index.
+        top_k: Maximum number of combined hits to return.
+
+    Returns:
+        A tuple containing the kept LONG hits, kept HOT hits, and the combined
+        cross-store ranking limited to ``top_k`` documents.
+    """
+
+    if top_k <= 0:
+        return [], [], []
+
+    hits: List[Dict[str, Any]] = []
+    corpus: List[str] = []
+    for res in (res_long, res_hot):
+        store_label = res.get("_store_label", "?")
+        index_used = res.get("_index_used", "?")
+        for hit in res.get("hits", {}).get("hits", []) or []:
+            if not isinstance(hit, dict):
+                continue
+            hit["_store_label"] = store_label
+            hit["_index_used"] = index_used
+            hits.append(hit)
+            text = (hit.get("_source", {}).get("content") or "").strip()
+            corpus.append(text)
+
+    if not hits:
+        return [], [], []
+
+    corpus_tokens = bm25s.tokenize(corpus, stopwords=_BM25_STOPWORDS, stemmer=_STEMMER)
+    has_tokens = False
+    for doc_tokens in corpus_tokens:
+        if len(doc_tokens) > 0:
+            has_tokens = True
+            break
+    query_tokens = bm25s.tokenize(question, stemmer=_STEMMER)
+
+    if not has_tokens or not query_tokens:
+        sorted_hits = sorted(
+            hits,
+            key=lambda h: h.get("_score", float("-inf")),
+            reverse=True,
+        )
+        top_hits = sorted_hits[: min(top_k, len(sorted_hits))]
+        for hit in top_hits:
+            hit.setdefault("_bm25_score", hit.get("_score"))
+    else:
+        retriever = bm25s.BM25()
+        retriever.index(corpus_tokens)
+        k = min(top_k, len(hits))
+        results, scores = retriever.retrieve(query_tokens, k=k)
+
+        # bm25s returns arrays shaped (n_queries, k). We only issue one query.
+        doc_ids = list(results[0])
+        doc_scores = list(scores[0])
+
+        top_hits = []
+        for doc_id, score in zip(doc_ids, doc_scores):
+            doc_index = int(doc_id)
+            if doc_index < 0 or doc_index >= len(hits):
+                continue
+            hit = hits[doc_index]
+            if "_original_score" not in hit and "_score" in hit:
+                hit["_original_score"] = hit["_score"]
+            hit["_score"] = float(score)
+            hit["_bm25_score"] = float(score)
+            top_hits.append(hit)
+
+        if not top_hits:
+            sorted_hits = sorted(
+                hits,
+                key=lambda h: h.get("_score", float("-inf")),
+                reverse=True,
+            )
+            top_hits = sorted_hits[: min(top_k, len(sorted_hits))]
+
+    combined = top_hits[: min(top_k, len(top_hits))]
+    for hit in combined:
+        hit.setdefault("_bm25_score", hit.get("_score"))
+    long_label = res_long.get("_store_label", "LONG")
+    hot_label = res_hot.get("_store_label", "HOT")
+    keep_long = [h for h in combined if h.get("_store_label") == long_label]
+    keep_hot = [h for h in combined if h.get("_store_label") == hot_label]
+
+    return keep_long, keep_hot, combined
+
+
 def rank_hits(res: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     Threshold per the spec: keep any hit whose score >= ALPHA * top1.
@@ -355,17 +463,17 @@ def rank_hits(res: Dict[str, Any]) -> List[Dict[str, Any]]:
     return keep
 
 
-def combine_hits(hits_a: List[Dict[str, Any]], hits_b: List[Dict[str, Any]], max_total: int = 10) -> List[Dict[str, Any]]:
+def combine_hits(hits_a: List[Dict[str, Any]], hits_b: List[Dict[str, Any]], top_k: int = 10) -> List[Dict[str, Any]]:
     """
     Combine two per-store lists without pretending cross-store scores are comparable.
     Policy: interleave A and B (stable) while preserving each list's order.
     """
     combined: List[Dict[str, Any]] = []
     ia = ib = 0
-    while len(combined) < max_total and (ia < len(hits_a) or ib < len(hits_b)):
+    while len(combined) < top_k and (ia < len(hits_a) or ib < len(hits_b)):
         if ia < len(hits_a):
             combined.append(hits_a[ia]); ia += 1
-        if len(combined) >= max_total:
+        if len(combined) >= top_k:
             break
         if ib < len(hits_b):
             combined.append(hits_b[ib]); ib += 1
@@ -433,11 +541,11 @@ def generate_answer(llm: Llama, question: str, context: str, observability: bool
     if not context.strip():
         return "No supporting documents found."
     
-    sys_msg = "Answer using ONLY the provided context."
+    sys_msg = "Answer using ONLY the provided context below."
     user_prompt = (
         f"Context:\n{context}\n\n"
         f"Question: {question}\n\n"
-        f"If context lacks the answer, reply with the following and nothing else: No relevant information found."
+        # f"If context lacks the answer, reply with the following and nothing else: No relevant information found."
     )
 
     if observability:
@@ -448,20 +556,25 @@ def generate_answer(llm: Llama, question: str, context: str, observability: bool
     resp = llm.create_chat_completion(
         messages=[{"role": "system", "content": sys_msg},
                   {"role": "user", "content": user_prompt}],
-        temperature=0.2, top_p=0.95, max_tokens=1024,
+        temperature=0.2, top_p=0.8, max_tokens=32768,
     )
     return resp["choices"][0]["message"]["content"].strip()
 
 
-def ask(llm: Llama, question: str, *, observability: bool = False,  external_ranker: bool = False, save_path: str | None = None) -> Tuple[str, List[Dict[str, Any]]]:
+def ask(llm: Llama, question: str, *, observability: bool = True,  external_ranker: bool = True,
+        top_k: int = 10, save_path: str | None = None) -> Tuple[str, List[Dict[str, Any]]]:
     # 1) NER
     ner = post_ner(question)
     entities = normalize_entities(ner)
 
     # 2) Build query to match <original>
     if external_ranker:
+        if observability:
+            print("\n\nUsing EXTERNAL ranking with BM25 re-ranking after retrieval.\n\n")
         query = build_query_external_ranking(question, entities)
     else:
+        if observability:
+            print("\n\nUsing INTERNAL OpenSearch ranking only.\n\n")
         query = build_query_opensearch_ranking(question, entities)
 
     if observability:
@@ -486,13 +599,12 @@ def ask(llm: Llama, question: str, *, observability: bool = False,  external_ran
 
     # 5) Rank per store (tolerate 0 hits)
     if external_ranker:
-        # TODO: we should use an external ranker here to improve LLM input quality. use https://github.com/davidvonthenen/bm25s
-        print("[WARNING] External ranking not yet implemented; falling back to internal score thresholding.")
+        keep_long, keep_hot, combined = rerank_hits_with_bm25(question, res_long, res_hot, top_k=top_k)
     else:
         keep_long = rank_hits(res_long)
         keep_hot  = rank_hits(res_hot)
-    combined  = combine_hits(keep_long, keep_hot, max_total=5)
-
+        combined  = combine_hits(keep_long, keep_hot, top_k=top_k)
+    
     # 6) Optional observability prints
     if observability:
         print(render_observability_summary(res_long))
