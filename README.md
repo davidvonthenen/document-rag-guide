@@ -22,11 +22,6 @@ Key objectives include:
 * Make promotion from **HOT → LT** a **controlled event** that happens only when (1) there is **enough positive reinforcement** of the data **or** (2) a **trusted human-in-the-loop** has verified it.
 * Show upgrade paths-from a minimal Python demo to an enterprise pipeline with NetApp enterprise storage.
 
-### What's inside this repo today
-
-* A concrete example of **paragraph-level chunking** (`community_version/ingest.py`) that writes both full documents and deterministic paragraph slices (`bbc-chunks` by default) so retrieval can target semantically tight spans without guessing where a fact lives inside a file.
-* An **external BM25 document ranker** (`community_version/common.py`) that re-scores combined hits from LT and HOT after the initial OpenSearch search. The same lexical query hits both stores in parallel, then the local BM25 stage ranks the merged set before the LLM sees any context, keeping the governance story explainable end-to-end.
-
 ## Benefits Over Vector-Based RAG
 
 Adopting Document-based RAG addresses several key limitations of traditional RAG agents:
