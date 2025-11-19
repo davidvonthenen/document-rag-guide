@@ -18,7 +18,7 @@ This approach also benefits from recent research that marries symbolic structure
 **Bottom line:**
 Pure vectors maximize fuzzy recall; hybrid (vector+BM25/sparse) balances fuzziness with keywords. Domain-trained NER + BM25 with entity-aware clauses makes the system explainable and governable without sacrificing retrieval quality. If your bar includes regulatory traceability, incident forensics, and reproducible outcomes (not only "good answers"), promote entities to first-class citizens (`explicit_terms`) and let vectors play a supporting role.
 
-> **IMPORTANT NOTE:** This implementation uses OpenSearch with explicit, fielded lexical queries and an external NER service to enrich documents at ingest. Searches query **LT and HOT in parallel** with deterministic, per-store ranking, highlight snippets, and stable mappings-making retrieval observable and auditable while reducing hallucinations by grounding answers in verifiable documents. Promotion **from HOT to LT** is a controlled, reviewable step performed only with sufficient reinforcement or human verification.
+> **IMPORTANT NOTE:** This implementation uses OpenSearch with explicit, fielded lexical queries and an external NER service to enrich documents at ingest. Searches query **LT and HOT in parallel**, then (by default) a lightweight **external BM25 re-ranker** re-scores the combined hit list before prompts are built, preserving determinism and explainability. Highlight snippets and stable mappings keep retrieval observable and auditable while reducing hallucinations by grounding answers in verifiable documents. Promotion **from HOT to LT** is a controlled, reviewable step performed only with sufficient reinforcement or human verification.
 
 ## **2. Document-Based RAG Architecture**
 
@@ -34,7 +34,7 @@ At a high level, the Document RAG architecture consists of three main components
 
    * **HOT (unstable)** holds volatile RL/experimental data and user-defined data or facts. HOT uses permissive schemas and TTL/rollover.
 
-3. **Integration Layer (Middleware)**: Connects the LLM and OpenSearch. For each question it calls the external NER API, builds an **auditable, entity-aware dis_max** query, and **queries LT and HOT in parallel**. This NER API is external and intentional. For maximum precision and correctness, it's highly recommended that a custom NER tuned to your problem set is created. This NER API keeps per-store top results without cross-mixing scores, collects highlights, interleaves results deterministically, and assembles the LLM prompt.
+3. **Integration Layer (Middleware)**: Connects the LLM and OpenSearch. For each question it calls the external NER API, builds an **auditable, entity-aware dis_max** query, and **queries LT and HOT in parallel**. This NER API is external and intentional. For maximum precision and correctness, it's highly recommended that a custom NER tuned to your problem set is created. After both stores respond, the middleware can optionally apply an **external BM25 re-ranker** (default behavior in this repo) to the merged hit list before collecting highlights and assembling the LLM prompt.
 
 ![Generic Document RAG Implementation](./images/reinforcement_learning.png)
 
@@ -55,7 +55,7 @@ The architecture separates HOT and LT to optimize governance, provenance, and op
 Adopting a Document RAG architecture with OpenSearch brings several distinct advantages:
 
 * **Structured Knowledge Representation**: Entities and provenance fields (`explicit_terms`, timestamps, categories, filepaths) give structure to unstructured text and enable precise, auditable filters.
-* **Deterministic Retrieval**: The middleware issues entity-aware lexical queries to **both** stores in parallel and interleaves per-store top hits without cross-normalizing scores.
+* **Deterministic Retrieval**: The middleware issues entity-aware lexical queries to **both** stores in parallel, then (when enabled) uses an external BM25 stage to re-rank the merged hits so the LLM receives a single, auditable ordering without opaque score mixing.
 * **Reduced Hallucinations, Improved Accuracy**: Answers are grounded in retrieved documents; strict entity concurrence (e.g., `terms_set` **AND**) reduces spurious hits.
 * **Transparency and Traceability**: Highlights plus fielded clauses make it clear **why** a document matched and **which** fields contributed.
 * **Open-Source Flexibility**: Built with OpenSearch, Flask, and Python-customizable and extensible without vendor lock-in.
@@ -78,7 +78,7 @@ Reasoning is externalized: we can map query → retrieved evidence → answer wi
 To conceptualize this, picture two stores and an orchestrator:
 
 * The **Orchestrator** receives a question, calls the **NER service**, builds an entity-aware dis_max query, and **queries LT and HOT in parallel**.
-* It ranks **within each store**, keeps above-threshold hits, interleaves them deterministically, and returns **highlights** with the hits.
+* It ranks **within each store**, optionally re-ranks the merged hits with an external BM25 step, and returns **highlights** with the final ordering.
 * The **LLM** receives only the retrieved snippets as context and generates the answer.
 * **Governance policy**: HOT → LT promotion happens **only** with sufficient positive reinforcement or explicit human verification.
 
@@ -118,7 +118,7 @@ HOT must respond quickly under load:
 * **Keep It Small**: Keep HOT effectively memory-resident. Favor zero replicas for latency; depend on LT for durability.
 * **Indexing and Refresh**: A short `refresh_interval` balances freshness and throughput.
 * **Sharding**: For small HOT indices, a single shard avoids scatter/gather overhead.
-* **Query Shape**: Use entity-aware, **fielded** queries. A strict **AND** via `terms_set` on `explicit_terms` ensures all required entities co-occur in the same document; add phrase or `multi_match` branches for recall. Request highlights on `content` for legibility. Execute the **same query against LT and HOT in parallel** and interleave per-store top hits deterministically.
+* **Query Shape**: Use entity-aware, **fielded** queries. A strict **AND** via `terms_set` on `explicit_terms` ensures all required entities co-occur in the same document; add phrase or `multi_match` branches for recall. Request highlights on `content` for legibility. Execute the **same query against LT and HOT in parallel**, then (optionally) let the external BM25 step re-rank the merged hits before handing them to the LLM.
 * **Resource Allocation**: Size CPU and I/O for promotion bursts and question spikes.
 * **Maintenance**: Run the TTL eviction job on a schedule. Keep HOT lean; fewer docs mean faster queries and cheaper merges.
 
@@ -145,7 +145,7 @@ Some characteristics of long-term memory:
 
 * **It is comprehensive:** The store covers a wide range of documents (manuals, knowledge articles, books, historical records). For enterprise assistants this can include policies, product docs, FAQs, and industry literature-material that benefits from durable indexing and provenance.
 
-* **It is structured for retrieval:** In this reference implementation we index **whole documents** and, by default, **paragraph-level chunks** with deterministic mappings. Each record carries `content` (text), `category` (keyword, lowercase normalizer), `filepath`/`URI` (stable `_id`), `explicit_terms` (keyword, lowercase normalizer), `explicit_terms_text` (text), `ingested_at_ms` (epoch_millis), and `doc_version` (long). This supports precise BM25, phrase constraints, and entity-aware filters.
+* **It is structured for retrieval:** In this reference implementation we index **whole documents** and, by default, **paragraph-level chunks** with deterministic mappings. Each record carries `content` (text), `category` (keyword, lowercase normalizer), `filepath`/`URI` (stable `_id`), `explicit_terms` (keyword, lowercase normalizer), `explicit_terms_text` (text), `ingested_at_ms` (epoch_millis), and `doc_version` (long). This supports precise BM25, phrase constraints, and entity-aware filters. The community ingest script (`community_version/ingest.py`) materializes this by writing full documents to `bbc` and paragraph slices to `bbc-chunks`, so practitioners can inspect and extend paragraph-level retrieval without guessing about the storage layout.
 
 * **It ensures consistency and accuracy:** The LT store is curated via a controlled ingest path that **enriches with external NER** at write time and assigns stable IDs plus `doc_version`. Updates are performed by re-ingest, keeping the corpus reproducible.
 
@@ -161,7 +161,7 @@ In essence, long-term memory acts as the AI's body of record. It complements **H
 
 The interaction between long-term and HOT is what gives the system its power:
 
-* **During Query Processing:** The orchestrator extracts entities from the user's question (using NER), builds an **auditable entity-aware BM25 query**, and **queries LT and HOT in parallel**. It ranks **within each store**, keeps above-threshold hits, then interleaves results deterministically for the LLM.
+* **During Query Processing:** The orchestrator extracts entities from the user's question (using NER), builds an **auditable entity-aware BM25 query**, and **queries LT and HOT in parallel**. It ranks **within each store**, then (by default) re-ranks the merged hits with an external BM25 stage before finalizing the context handed to the LLM.
 
 * **Promotion from HOT → LT** occurs **only** when (1) there is **enough positive reinforcement** of the data **or** (2) a **trusted human-in-the-loop** has verified the data. Long-term remains authoritative.
 
@@ -197,7 +197,7 @@ Effective AI governance means ensuring that AI systems operate in a manner that 
 
 ### **Transparency and Explainability**
 
-The system links each AI answer back to specific documents and fields. Retrieval is **lexical-first** (BM25, phrase queries) with explicit, auditable clauses against `content`, `category`, and entity fields (`explicit_terms`, `explicit_terms_text`). We return **highlights** so reviewers can see the exact matched spans. LT and **HOT (unstable)** are queried **in parallel**, ranked **per store**, then interleaved-keeping score math and reasoning observable.
+The system links each AI answer back to specific documents and fields. Retrieval is **lexical-first** (BM25, phrase queries) with explicit, auditable clauses against `content`, `category`, and entity fields (`explicit_terms`, `explicit_terms_text`). We return **highlights** so reviewers can see the exact matched spans. LT and **HOT (unstable)** are queried **in parallel**, then the combined hit list can be re-ranked with the external BM25 stage to keep score math observable and explainable.
 
 ### **Fairness and Bias Mitigation**
 
@@ -236,7 +236,7 @@ Builders who value transparency, composability, and zero vendor lock-in.
   Swap in domain NER without changing the retrieval contract. Keep shared schemas stable while evolving analyzers and fielded clauses. Observability flags (e.g., saved JSONL) make experiments repeatable.
 
 * **Use case**
-  A programming Q&A assistant ingests manuals, API docs, and forum answers into **LT** with NER enrichments. At question time, NER extracts entities (APIs, error codes); the orchestrator **queries LT and HOT in parallel**, ranks per store, interleaves deterministically, and sends highlights to the LLM. A nightly job **materializes** popular LT docs into **HOT** via `/_reindex`; TTL cleans them up. No per-question copying, no mystery scores.
+  A programming Q&A assistant ingests manuals, API docs, and forum answers into **LT** with NER enrichments. At question time, NER extracts entities (APIs, error codes); the orchestrator **queries LT and HOT in parallel**, re-ranks the merged hits with the external BM25 stage, and sends highlights to the LLM. A nightly job **materializes** popular LT docs into **HOT** via `/_reindex`; TTL cleans them up. No per-question copying, no mystery scores.
 
 ### **Enterprise Architects**
 
@@ -252,7 +252,7 @@ Leaders who must integrate AI into existing estates with guardrails for scale, s
   Run **LT** for durability and **HOT** for volatile/experimental workloads with different SLAs. Capacity planning follows standard OpenSearch practices; snapshots on LT provide point-in-time attestations.
 
 * **Use case**
-  A policy assistant for a financial firm ingests manuals and memos into **LT**. Queries hit **LT and HOT** in parallel; per-store top hits are interleaved and highlighted. Everything runs in-VPC with enterprise auth.
+  A policy assistant for a financial firm ingests manuals and memos into **LT**. Queries hit **LT and HOT** in parallel; the merged hit list is optionally re-ranked externally with BM25 before being highlighted. Everything runs in-VPC with enterprise auth.
 
 ### **NetApp Infrastructure Customers**
 
@@ -294,7 +294,7 @@ Please see [GitHub repository](https://github.com/davidvonthenen/docuemnt-rag-gu
 
 ## **8. Conclusion**
 
-The Document RAG architecture moves AI retrieval from opaque heuristics to **observable, governable search**. Pairing a Large Language Model with **lexical-first OpenSearch retrieval** (BM25, phrase constraints, and fielded entity clauses) blends generation with verifiable evidence. Queries run against **both Long-Term (LT) and HOT (unstable)** in parallel, ranked **per store** and interleaved deterministically-delivering reliability, transparency, and compliance that end-to-end training or vector-only stacks can't match.
+The Document RAG architecture moves AI retrieval from opaque heuristics to **observable, governable search**. Pairing a Large Language Model with **lexical-first OpenSearch retrieval** (BM25, phrase constraints, and fielded entity clauses) blends generation with verifiable evidence. Queries run against **both Long-Term (LT) and HOT (unstable)** in parallel, and (by default) the merged hit list is re-ranked externally with BM25 before final delivery—maintaining reliability, transparency, and compliance that end-to-end training or vector-only stacks can't match.
 
 Knowledge is treated as a first-class asset. **LT (LT)** is the vetted, durable store with deterministic mappings (`explicit_terms`, provenance fields, versions). **HOT (unstable)** is an operational, entity-scoped store governed by TTL. **HOT → LT promotion happens only** when there is sufficient **positive reinforcement** of the data **or** a **trusted human-in-the-loop** has verified it.
 

@@ -123,7 +123,7 @@ With clean, well-labeled documents in long-term memory, every downstream RAG que
 1. **Entity set is selected out-of-band** — from recent activity, topics, or operator input using the external NER service.
 2. **Promotion filter** targets `explicit_terms` (and optionally a time window on `ingested_at_ms`).
 3. **HOT `/_reindex` from remote LT** executes with that filter and **stamps `hot_promoted_at` (epoch_millis)** on each copied doc.
-4. **Serving**: the application **queries LT and HOT in parallel** (see query code) and interleaves kept hits; there is **no inline reindexing** during a user question.
+4. **Serving**: the application **queries LT and HOT in parallel** (see query code) and, by default, uses the external BM25 re-ranker to order the merged hit list; there is **no inline reindexing** during a user question.
 5. **Eviction job** removes docs whose `hot_promoted_at` exceeds the configured TTL.
 
 ```json
@@ -192,7 +192,7 @@ Document-based RAG turns retrieval-augmented generation from a black-box trick i
 * **Safer.** Opaque embeddings are replaced with deterministic, explainable retrieval logic; hallucinations and hidden bias are easier to detect and fix.
 * **Compliant.** Built-in provenance metadata (`filepath`/`URI`, `ingested_at_ms`, `doc_version`) makes regulatory alignment and retention policies straightforward.
 
-The enterprise path centers on **on-demand `/_reindex` executed on HOT with a remote source pointing to LT**, filtered by normalized entities, plus a **TTL eviction job** keyed on `hot_promoted_at`. Query serving does **not** trigger reindex; the orchestrator searches LT and HOT in parallel and interleaves kept hits. **HOT → LT promotion occurs only** when (1) sufficient positive reinforcement warrants it **or** (2) a trusted human-in-the-loop has verified the data. When needed, **Cross-Cluster Replication (CCR)**, **Index State Management (ISM)**, and **NetApp FlexCache** add 24/7 resilience, lifecycle control, and high-speed caching at scale.
+The enterprise path centers on **on-demand `/_reindex` executed on HOT with a remote source pointing to LT**, filtered by normalized entities, plus a **TTL eviction job** keyed on `hot_promoted_at`. Query serving does **not** trigger reindex; the orchestrator searches LT and HOT in parallel and (by default) feeds the merged hits through the external BM25 re-ranker before presenting context to the LLM. **HOT → LT promotion occurs only** when (1) sufficient positive reinforcement warrants it **or** (2) a trusted human-in-the-loop has verified the data. When needed, **Cross-Cluster Replication (CCR)**, **Index State Management (ISM)**, and **NetApp FlexCache** add 24/7 resilience, lifecycle control, and high-speed caching at scale.
 
 ## Next Steps
 

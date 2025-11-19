@@ -21,6 +21,8 @@ We set `tie_breaker` to `0.0`, so the best branch wins without cross-branch scor
 
 > Note: the current code **does not enforce phrase-scoped matching** (`match_phrase`) for entities; the strictness comes from `terms_set` on the keyword entity field, not from phrase queries.
 
+After both LT and HOT respond, `community_version/common.py` can (and does, by default) run an **external BM25 re-ranker** that re-scores the merged hit list. The re-ranker is lightweight (`bm25s` Python library), keeps score math outside OpenSearch for transparency, and ensures the LLM sees a single auditable ordering instead of two separately ranked pools. Disable it only if you need to inspect raw OpenSearch scores.
+
 **Dual-store design (HOT vs. Long) with OpenSearch**
 
 | Layer                    | Where it lives                                  | What it stores                               | Why it matters                                                                 |
@@ -61,6 +63,8 @@ The reference `ingest.py` makes it concrete:
   * `explicit_terms` (**keyword**, with lowercase normalizer)
   * `explicit_terms_text` (**text**, BM25-scored)
 
+* Paragraph-level slices are emitted alongside each document. By default, `community_version/ingest.py` writes full documents into `bbc` (configurable via `INDEX_NAME`) and deterministic paragraph chunks into `bbc-chunks` (`CHUNK_INDEX_NAME`). Each chunk carries the parent filepath, chunk index, and chunk count so you can trace a span back to the source file without manual bookkeeping.
+
 We also store **stable operational metadata**:
 
 * `ingested_at_ms` (epoch millis)
@@ -81,6 +85,10 @@ Document {
 ```
 
 Documents are **inserted** by stable `_id` (the path under `DATA_DIR`). They are not immutable; repeat runs replace prior versions in place with an updated `doc_version`.
+
+### Paragraph-level chunking in practice
+
+Paragraph slices become the default retrieval unit in the community stack: the query helpers point at the chunk index so each BM25 hit already maps to a small span. Because `chunk_index`, `chunk_count`, and `parent_filepath` are stored on each record, governance reviews can jump from a retrieved paragraph to the original file instantly. Adjust `split_into_paragraphs` in `community_version/ingest.py` if your corpus needs a different slicing heuristic (e.g., headers or semantic sentences) while keeping the metadata contract intact.
 
 ### Step-by-Step Walkthrough
 
