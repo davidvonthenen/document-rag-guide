@@ -132,6 +132,15 @@ You may need to unzip the `bbc-example.zip` file, which you can do by running th
 unzip bbc-example.zip
 ```
 
+## Paragraph-Level Chunking Demo
+
+The reference ingest (`community_version/ingest.py`) now writes **two** indices on every run:
+
+* `INDEX_NAME` (default `bbc`) contains the full documents with metadata for provenance.
+* `CHUNK_INDEX_NAME` (default `bbc-chunks`) stores deterministic paragraph slices. Each record carries `parent_filepath`, `chunk_index`, and `chunk_count` so you can trace the snippet back to the source file when auditors ask where a fact originated.
+
+Query helpers in `community_version/common.py` point to the chunk index by default, so BM25 hits already map to paragraph-scale spans. Adjust `split_into_paragraphs()` if your corpus needs different chunking heuristics, or swap `LONG_INDEX_NAME`/`HOT_INDEX_NAME` env vars if you prefer document-level retrieval.
+
 ## Example Workflows
 
 Here are different workflows that demonstrate how a Document RAG solution can lead to better AI Governance.
@@ -170,6 +179,10 @@ This workflow illustrates how new facts can be introduced and evaluated in **hot
 
 7. **Reset Both Long-Term and HOT Instances**: Run `python helper/wipe_all_memory.py`.
  This stops and/or clears the data in both the long-term and **hot** databases, allowing you to repeat the workflows from a clean state if desired.
+
+## External BM25 Document Re-Ranker
+
+All query entry points (`query.py`, `example/query.py`, and the reinforcement-learning demo) call `common.ask(...)`, which now defaults to `external_ranker=True`. After OpenSearch returns results from **both** LT and HOT, the helper uses the lightweight [`bm25s`](https://github.com/xhluca/bm25s) library to re-rank the merged hit list locally. This keeps score math transparent, produces a single ordered context list for the LLM, and makes it obvious how each snippet earned its place. If you ever want to inspect raw OpenSearch ranking, pass `external_ranker=False` when calling `ask` or fork the script to expose a CLI flag.
 
 ## Conclusion
 
