@@ -1,6 +1,6 @@
 # Pure Open Source Community Implementation for Document RAG with Reinforcement Learning
 
-This README.md provides an **open-source/community-oriented reference implementation** for a  lexical-first Retrieval-Augmented Generation (RAG) system, which supports a HOT data and reinforcement learning to consume new facts. This is modeled after a specific example, so your implementation might differ materially from the specifics here; however, the high-level concepts are the same.
+This README.md provides an **open-source/community-oriented reference implementation** for a lexical-first Retrieval-Augmented Generation (RAG) system, which supports a HOT data and reinforcement learning to consume new facts. This is modeled after a specific example, so your implementation might differ materially from the specifics here; however, the high-level concepts are the same.
 
 ## Prerequisites
 
@@ -13,14 +13,14 @@ This README.md provides an **open-source/community-oriented reference implementa
 **Docker images to pre-pull:**
 
 - `opensearchproject/opensearch:3.2.0` (used for both long-term and HOT instances)
+- `opensearchproject/opensearch-dashboards:3.2.0` (dashboards for visualizing operational aspects)
 
 ### LLM to pre-download:
 
 For example, you can use the following 7-8B parameter models that run locally (CPU-friendly via [llama.cpp](https://github.com/ggerganov/llama.cpp)):
 
-- Intel's **neural-chat-7B-v3-3-GGUF** - *(tested model)* available on HuggingFace
-- OR [bartowski/Meta-Llama-3-8B-Instruct-GGUF](https://huggingface.co/bartowski/Meta-Llama-3-8B-Instruct-GGUF/resolve/main/Meta-Llama-3-8B-Instruct-Q4_K_M.gguf) - an 8B instruction-tuned Llama variant.
-- OR use an API/manager like [Ollama](https://ollama.com/), e.g. `ollama pull llama3:8b` for an 8B Llama model.
+* Alibaba Cloud's **[Qwen2.5-7B-Instruct-1M-GGUF](https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-1M-GGUF)** - *(tested model)* available on HuggingFace
+* Intel's **[neural-chat-7B-v3-3-GGUF](https://huggingface.co/TheBloke/neural-chat-7B-v3-3-GGUF)** - available on HuggingFace
 
 ## Setting Up the Environment
 
@@ -35,10 +35,13 @@ For demonstration purposes, we will create 2 OpenSearch instances: one instance 
 Create a private network and bring up **long-term** and **HOT** instances. We’ll expose **9201** (LT) and **9202** (HOT) on localhost and disable the security plugin for a frictionless demo.
 
 ```bash
-# create a docker network so that opensearch instances and dashboards can access each other
+# create docker network
 docker network create opensearch-net
 
-# opensearch for long-term data retention
+# Long-Term Memory Instance (opensearch-long-term)
+# API: http://localhost:9201
+# Admin Panel via Dashboards: http://localhost:5601
+# Port 9201
 docker run -d \
     --name opensearch-longterm \
     --network opensearch-net \
@@ -49,7 +52,6 @@ docker run -d \
     -v "$HOME/opensearch-longterm/snapshots:/mnt/snapshots" \
     opensearchproject/opensearch:3.2.0
 
-# (optional) opensearch dashboards for debugging, observability
 docker run -d \
     --name opensearch-longterm-dashboards \
     --network opensearch-net \
@@ -58,7 +60,12 @@ docker run -d \
     -e 'DISABLE_SECURITY_DASHBOARDS_PLUGIN=true' \
     opensearchproject/opensearch-dashboards:3.2.0
 
-# opensearch for HOT data
+
+# HOT Memory Instance (opensearch-shortterm)
+# API: http://localhost:9202
+# Admin Panel via Dashboards: http://localhost:5602
+# Port 9202
+# The volume below would ideally be a FlexCache volume for burst performance
 docker run -d \
     --name opensearch-shortterm \
     --network opensearch-net \
@@ -69,7 +76,6 @@ docker run -d \
     -v "$HOME/opensearch-shortterm/snapshots:/mnt/snapshots" \
     opensearchproject/opensearch:3.2.0
 
-# (optional) opensearch dashboards for debugging, observability
 docker run -d \
     --name opensearch-shortterm-dashboards \
     --network opensearch-net \
