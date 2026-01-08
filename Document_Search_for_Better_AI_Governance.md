@@ -294,7 +294,7 @@ Please see [GitHub repository](https://github.com/davidvonthenen/docuemnt-rag-gu
 
 ## **8. Conclusion**
 
-The Document RAG architecture moves AI retrieval from opaque heuristics to **observable, governable search**. Pairing a Large Language Model with **lexical-first OpenSearch retrieval** (BM25, phrase constraints, and fielded entity clauses) blends generation with verifiable evidence. Queries run against **both Long-Term (LT) and HOT (unstable)** in parallel, and (by default) the merged hit list is re-ranked externally with BM25 before final delivery—maintaining reliability, transparency, and compliance that end-to-end training or vector-only stacks can't match.
+The Document RAG architecture moves AI retrieval from opaque heuristics to **observable, governable search**. Pairing a Large Language Model with **lexical-first OpenSearch retrieval** (BM25, phrase constraints, and fielded entity clauses) blends generation with verifiable evidence. Queries run against **both Long-Term (LT) and HOT (unstable)** in parallel, and (by default) the merged hit list is re-ranked externally with BM25 before final delivery maintaining reliability, transparency, and compliance that end-to-end training or vector-only stacks can't match.
 
 Knowledge is treated as a first-class asset. **LT (LT)** is the vetted, durable store with deterministic mappings (`explicit_terms`, provenance fields, versions). **HOT (unstable)** is an operational, entity-scoped store governed by TTL. **HOT → LT promotion happens only** when there is sufficient **positive reinforcement** of the data **or** a **trusted human-in-the-loop** has verified it.
 

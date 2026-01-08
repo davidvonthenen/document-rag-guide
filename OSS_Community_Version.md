@@ -1,12 +1,12 @@
 # Document RAG: Open Source Community Version
 
-Most "RAG" stacks start with vectors and end with questions from auditors: *why did that snippet surface, which fields mattered, and can we reproduce the response tomorrow?* Document RAG flips the playbook. We begin with **OpenSearch BM25** and an **external NER service** so retrieval is explicit, auditable, and grounded in text and metadata you control—then add dense signals only if they earn their keep. This mirrors capabilities produced by [Graph-based RAG and Knowledge Graphs](https://neo4j.com/blog/genai/what-is-graphrag/) but using Document search as the focal point.
+Most "RAG" stacks start with vectors and end with questions from auditors: *why did that snippet surface, which fields mattered, and can we reproduce the response tomorrow?* Document RAG flips the playbook. We begin with **OpenSearch BM25** and an **external NER service** so retrieval is explicit, auditable, and grounded in text and metadata you control then add dense signals only if they earn their keep. This mirrors capabilities produced by [Graph-based RAG and Knowledge Graphs](https://neo4j.com/blog/genai/what-is-graphrag/) but using Document search as the focal point.
 
 ![Community Document RAG](./images/community_version.png)
 
 **Why lexical-first beats black-box vectors**
 
-* **Explainability on day one.** We treat entities and keywords as first-class citizens and query them directly. You can point to the exact fields and terms that fired—no hand-waving about "semantic neighbors."
+* **Explainability on day one.** We treat entities and keywords as first-class citizens and query them directly. You can point to the exact fields and terms that fired. No hand-waving about "semantic neighbors."
 * **Deterministic, governable search.** We use explicit **keyword normalizers** on entity fields, default **BM25** scoring, and **highlights** for legibility.
 * **Reduce hallucinations without hiding the ball.** Answers are grounded in retrieved documents (not vector vibes), and every claim traces back to source evidence.
 
@@ -28,7 +28,7 @@ After both LT and HOT respond, `community_version/common.py` can (and does, by d
 | Layer                    | Where it lives                                  | What it stores                               | Why it matters                                                                 |
 | ------------------------ | ----------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------ |
 | **Long-term (LT)**       | Dedicated OpenSearch index on durable storage   | Curated, vetted content + stable NER fields  | Authoritative source with provenance; ideal for compliance and audits          |
-| **HOT (unstable) cache** | Separate OpenSearch index on isolated resources | Fresh, session-scoped context and live feeds | Isolates blast radius and policy; natural place to enforce TTLs and test facts |
+| **HOT (unstable) cache** | Separate OpenSearch index on isolated resources | User-specific, session-scoped context + live feeds | Isolates blast radius and policy; natural place to enforce TTLs and test facts |
 
 Promotion is **explicit and outside the query path**: the retrieval code queries **LT and HOT in parallel** (read-only). Moving data **from HOT to LT** occurs **only** when there's sufficient positive reinforcement of the facts *or* a trusted human-in-the-loop has verified them.
 
@@ -36,9 +36,9 @@ Promotion is **explicit and outside the query path**: the retrieval code queries
 
 * **Transparency & accountability:** Each result includes **highlighted** excerpts and matches on explicit fields, so you can always explain *why* a document surfaced.
 * **Compliance by design:** Clear lifecycles (**HOT TTL** vs. long-term retention) simplify GDPR/HIPAA-style obligations.
-* **Lower risk, higher signal:** Grounded retrieval reduces fabrication while keeping dense signals as an **optional, declared add-on**—not a hidden default.
+* **Lower risk, higher signal:** Grounded retrieval reduces fabrication while keeping dense signals as an **optional, declared add-on** not a hidden default.
 
-The sections that follow show how to **ingest** with NER enrichments (stable mappings; NER service **required by default**), **retrieve** with strict entity co-occurrence via `terms_set` under `dis_max` (no named branches) and **highlights**, and **operate LT ↔ HOT promotion workflows** (outside the query path) with optional TTL/ISM policies—all with observability hooks that make auditors smile.
+The sections that follow show how to **ingest** with NER enrichments (stable mappings; NER service **required by default**), **retrieve** with strict entity co-occurrence via `terms_set` under `dis_max` (no named branches) and **highlights**, and **operate LT ↔ HOT promotion workflows** (outside the query path) with optional TTL/ISM policies all with observability hooks that make auditors smile.
 
 ## 2. Ingesting Your Data Into Long-Term Memory
 
@@ -72,17 +72,10 @@ We also store **stable operational metadata**:
 
 This representation supports strict **AND** matching on entities (via `terms_set` against `explicit_terms`) and lexical BM25 recall, both with clear "why did this match" stories.
 
-```
-Document {
-   filepath               // keyword
-   category               // keyword (lowercase normalizer)
-   content                // text
-   explicit_terms         // keyword (lowercase normalizer)
-   explicit_terms_text    // text
-   ingested_at_ms         // date (epoch_millis)
-   doc_version            // long
-}
-```
+**Key fields (high-level):**
+* `filepath`, `category`, `content` for traceability and lexical search.
+* `explicit_terms`, `explicit_terms_text` for entity-aware retrieval.
+* `ingested_at_ms`, `doc_version` for provenance.
 
 Documents are **inserted** by stable `_id` (the path under `DATA_DIR`). They are not immutable; repeat runs replace prior versions in place with an updated `doc_version`.
 
@@ -99,9 +92,9 @@ Paragraph slices become the default retrieval unit in the community stack: the q
 | **3. Read text**              | Raw file body stored under `content`.                                                  | `p.read_text()`                            |
 | **4. Call NER service**       | POST full text to `DEFAULT_URL` (`/ner`); labels are enforced server-side.             | `post_ner()`                               |
 | **5. Normalize entities**     | Lowercase + dedupe; produce `explicit_terms` and `explicit_terms_text`.                | `extract_normalized_entities()`            |
-| **6. Persist doc**            | Index with stable `_id` = path under `DATA_DIR`; include `ingested_at_ms/doc_version`. | `client.index()`                           |
-| **7. Batch refresh**          | One refresh after the loop (not per doc).                                              | `indices.refresh()`                        |
-| **8. Logs for observability** | Console prints filepath and extracted entities during ingest.                          | `print(...)`                               |
+| **6. Persist doc/chunks**     | Index full docs + BM25 chunks + vector chunks with stable IDs.                         | Indexing helpers                           |
+| **7. Batch refresh**          | One refresh after the loop (not per doc).                                              | Index refresh                              |
+| **8. Logs for observability** | Console prints filepath and extracted entities during ingest.                          | Logger                                    |
 
 ### Operational Knobs You Control
 
@@ -136,7 +129,7 @@ There is **no in-index confidence scoring** in the reference implementation.
 
 What we actually track today:
 
-* `hot_promoted_at` (epoch millis) on HOT documents — written during promotion.
+* `hot_promoted_at` (epoch millis) on HOT documents written during promotion.
 * Optional app-level metrics (outside OpenSearch) if you choose to log cache hits or human reviews.
 * Eviction is driven by time (TTL), not by a score.
 
@@ -165,45 +158,7 @@ If you need scores later, store them **out-of-band** (analytics DB) and keep lon
 
 **Evict expired HOT docs by TTL (matches reference script)**
 
-```python
-from opensearchpy import OpenSearch
-import time, os, json
-
-OPENSEARCH_HOST = os.getenv("OPENSEARCH_HOST", "localhost")
-OPENSEARCH_PORT = int(os.getenv("OPENSEARCH_PORT", "9202"))
-OPENSEARCH_SSL  = os.getenv("OPENSEARCH_SSL", "false").lower() == "true"
-
-client = OpenSearch(
-    hosts=[{"host": OPENSEARCH_HOST, "port": OPENSEARCH_PORT}],
-    use_ssl=OPENSEARCH_SSL, verify_certs=OPENSEARCH_SSL, timeout=60, max_retries=3, retry_on_timeout=True
-)
-
-INDEX_NAME  = "bbc"               # HOT index/alias
-TTL_MINUTES = 30                  # align with your ops policy
-
-now_ms      = int(time.time() * 1000)
-threshold   = now_ms - TTL_MINUTES * 60 * 1000
-
-body = {
-  "query": {
-    "bool": {
-      "filter": [
-        {"exists": {"field": "hot_promoted_at"}},
-        {"range":  {"hot_promoted_at": {"lt": threshold}}}
-      ]
-    }
-  }
-}
-
-resp = client.delete_by_query(
-    index=INDEX_NAME,
-    body=body,
-    params={"conflicts": "proceed", "refresh": "true", "wait_for_completion": "true"}
-)
-print(json.dumps(resp, indent=2))
-```
-
-> Note: Promotion is executed by a **HOT-side job** using `/_reindex` (remote source = LT) with an entity `terms` filter. The NER service only returns entities; it **does not** promote.
+The reference workflow uses a scheduled deletion against the HOT index for items whose `hot_promoted_at` is older than the configured TTL. Promotion is executed by a **HOT-side job** using `/_reindex` (remote source = LT) with an entity filter. The NER service only returns entities; it **does not** promote.
 
 ### Tunables you should expose
 
@@ -233,20 +188,19 @@ For a reference, please check out the following: [community_version/README.md](.
 
 ## 5. Conclusion
 
-Document-first RAG gives you more than quick answers—it gives you answers you can **defend**.
+Document-first RAG gives you more than quick answers... it gives you answers you can **defend**.
 
 * **Transparency & explainability** are built-in: explicit fields (`explicit_terms`, `explicit_terms_text`), entity filters (`terms_set`), and **highlights** show *exactly* why a document matched.
 * **Accountability & risk control** improve because retrieval is deterministic (fixed mappings, lowercase normalizer, BM25), and promotion/eviction behavior is configured and reproducible.
 * **Compliance** turns into an operational posture: a durable long-term store, a TTL-governed **HOT** cache keyed by `hot_promoted_at`, and observable promotion/eviction events.
 
-Pair that with the dual-store layout—**HOT (unstable) cache** for today's topics plus **durable long-term memory** for provenance—and you get a system that's **responsive now** and **auditable later**.
+Pair that with the dual-store layout (**HOT (unstable) cache** for today's topics plus **durable long-term memory** for provenance) and you get a system that's **responsive now** and **auditable later**.
 
 ### Your next steps
 
 1. **Clone the repo and run the stack.** Stand up OpenSearch, create indices, ingest, and run STRICT entity queries (`terms_set`) to see **highlights** in action (with the parallel LT+HOT plan).
 2. **Swap the NER.** Configure the NER service (`SPACY_MODEL` or your model) to fit your domain; if you want per-doc audit fields, extend the mapping to include them.
 3. **Enable HOT cache (promotion + TTL).** Trigger a **HOT-side** `/_reindex` from **LT** using an entity `terms` filter, stamp `hot_promoted_at`, and schedule TTL eviction. Log hits/validations **out of band**. Promotion **from HOT to LT** happens **only** after sufficient positive reinforcement **or** trusted human approval.
-4. **(Optional) Add vectors—explicitly.** If you introduce dense fields, document the scorers and how you mix them with BM25 (e.g., RRF or a linear blend). Keep lexical as the default, explainable baseline.
-5. **Share what you learn.** PRs with analyzer tweaks, relevance sweeps, and governance playbooks make the ecosystem better.
+4. **Share what you learn.** PRs with analyzer tweaks, relevance sweeps, and governance playbooks make the ecosystem better.
 
 Document-based RAG isn't a thought experiment; it's running code with clear governance wins. Spin it up, measure it, and raise the bar for responsible retrieval.

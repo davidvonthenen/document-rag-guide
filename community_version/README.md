@@ -32,10 +32,10 @@ For demonstration purposes, we will create 2 OpenSearch instances: one instance 
 
 ### Launch OpenSearch with Docker
 
-Create a private network and bring up **long-term** and **HOT** instances. We’ll expose **9201** (LT) and **9202** (HOT) on localhost and disable the security plugin for a frictionless demo.
+Create a private network and bring up **long-term** and **HOT** instances. We'll expose **9201** (LT) and **9202** (HOT) on localhost and disable the security plugin for a frictionless demo.
 
 ```bash
-# create docker network
+# create a docker network so that opensearch instances and dashboards can access each other
 docker network create opensearch-net
 
 # Long-Term Memory Instance (opensearch-long-term)
