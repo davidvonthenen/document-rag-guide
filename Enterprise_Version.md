@@ -2,7 +2,7 @@
 
 Retrieval-Augmented Generation (RAG) has become a critical pattern for grounding Large Language Model (LLM) responses in real-world data, improving both accuracy and reliability. Yet, conventional RAG implementations often default to vector databases, which come with drawbacks: hallucinations, opaque ranking logic, and challenges with regulatory compliance.
 
-![Enterprise Document RAG](./images/enterprise_version.png)
+![Enterprise Document RAG](./images/enterprise_deployment.png)
 
 In contrast, Document-centric RAG built on **lexical search (BM25)** offers a transparent and deterministic alternative. This mirrors capabilities produced by [Graph-based RAG and Knowledge Graphs](https://neo4j.com/blog/genai/what-is-graphrag/) but using BM25 search as the focal point. By prioritizing explicit term matching and leveraging an **external NER service** to extract normalized entities that are stored alongside documents, this architecture produces retrievals that are observable, reproducible, and audit-ready. Every query can be explained down to which entity or phrase matched and why a document was returned.
 
